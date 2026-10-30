@@ -1,0 +1,5 @@
+# 深度学习路线依赖（dl/），含基础依赖
+-r requirements.txt
+torch>=2.2
+torchvision>=0.17
+kornia>=0.7          # 可微图像算子（可选）

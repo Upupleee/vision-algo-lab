@@ -1,0 +1,5 @@
+# 传统算法依赖（traditional/ 及公共测试数据、评测）
+numpy>=1.26
+opencv-python>=4.9
+scipy>=1.11
+matplotlib>=3.8

@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.idea/
+.vscode/
+.ipynb_checkpoints/
+
+# 实验产物
+data/output/
+*.png
+*.jpg
+*.npy
+!data/__init__.py
+runs/
+checkpoints/
+*.pth
+*.onnx
