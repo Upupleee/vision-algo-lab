@@ -142,13 +142,98 @@ def _fit_line(pts: np.ndarray) -> tuple[tuple[float, float, float, float], float
 
 
 if __name__ == "__main__":
-    from data.synthetic import make_edge_scene
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Rectangle
 
+    from data.synthetic import make_edge_scene
+    from traditional.viz import AUX, DET, GT, image_ax, metric_text, save, setup
+
+    setup()
     img, gt_fn = make_edge_scene(noise=1.0)
     # 长轴沿 +y（angle=90），卡尺横向采样沿 x，边缘满足 x = gt_fn(y)
     cal = Caliper(center=(61.5, 80), length=128, width=11, angle_deg=90.0, num_probes=40)
     res = cal.measure(img)
     pts = res.points
     err = np.abs(pts[:, 0] - gt_fn(pts[:, 1]))
-    print(f"边缘位置误差: mean={np.nanmean(err):.4f} px, max={np.nanmax(err):.4f} px")
+    mean_err, max_err = float(np.nanmean(err)), float(np.nanmax(err))
+    print(f"边缘位置误差: mean={mean_err:.4f} px, max={max_err:.4f} px")
     print(f"直线拟合 RMS={res.rms:.4f} px")
+
+    fig, axes = plt.subplots(
+        1, 3, figsize=(14.5, 4.4), gridspec_kw={"width_ratios": [1, 1.15, 1]}
+    )
+
+    # (a) 原图 + ROI + 边缘点 + 拟合线 vs 真值线
+    image_ax(axes[0], img, "卡尺 ROI 与边缘点")
+    cx, cy = cal.center
+    half_len = cal.length / 2.0
+    axes[0].add_patch(
+        Rectangle((cx - cal.width / 2.0, cy - half_len), cal.width, cal.length,
+                  fill=False, edgecolor=AUX, linestyle="-", linewidth=1.4,
+                  label="卡尺 ROI", zorder=4)
+    )
+    yy = np.linspace(cy - half_len, cy + half_len, 100)
+    axes[0].plot(gt_fn(yy), yy, color=GT, ls="--", lw=1.6, label="真值边缘", zorder=6)
+    valid = ~np.isnan(pts[:, 0])
+    axes[0].plot(pts[valid, 0], pts[valid, 1], linestyle="none", marker="o",
+                 markersize=2.6, color=DET, label="亚像素边缘点", zorder=7)
+    if res.line is not None:
+        vx, vy, x0, y0 = res.line
+        t = np.linspace(-half_len, half_len, 50)
+        axes[0].plot(x0 + vx * t, y0 + vy * t, color=DET, lw=1.2,
+                     alpha=0.85, label="PCA 拟合直线", zorder=8)
+    axes[0].legend(loc="upper right", fontsize=6.5, borderpad=0.3, handlelength=1.4)
+    metric_text(
+        axes[0],
+        [
+            f"边缘误差 mean {mean_err:.4f} px",
+            f"            max {max_err:.4f} px",
+            f"拟合 RMS   {res.rms:.4f} px",
+            f"有效点     {int(valid.sum())}/{len(pts)}",
+        ],
+    )
+
+    # (b) 每个卡尺的定位偏差
+    axes[1].plot(pts[valid, 1], (pts[valid, 0] - gt_fn(pts[valid, 1])),
+                 "o-", color=DET, lw=1.3, ms=3.4)
+    axes[1].axhline(0.0, color=GT, ls="--", lw=1.2)
+    axes[1].set_title("各卡尺边缘定位偏差", pad=6)
+    axes[1].set_xlabel("y（px）")
+    axes[1].set_ylabel("Δx = 检测 − 真值（px）")
+    axes[1].grid(True, alpha=0.5)
+    axes[1].legend(["偏差", "零线"], loc="upper right", fontsize=7)
+
+    # (c) 单条探针的灰度剖面与梯度 —— 亚像素峰是怎么来的
+    from scipy.ndimage import gaussian_filter1d
+
+    theta = np.deg2rad(cal.angle_deg)
+    normal_v = np.array([-np.sin(theta), np.cos(theta)])
+    ss = np.arange(-(cal.width // 2), cal.width // 2 + 1)
+    base = np.array(cal.center)  # 取正中间那条卡尺
+    probe_pts = base[None, :] + normal_v[None, :] * ss[:, None]
+    prof = _sample_points(img, probe_pts)
+    # 用 reflect 边界的高斯滤波；np.convolve 的 same 模式补零，会把两端拉变形
+    prof_s = gaussian_filter1d(prof, sigma=cal.sigma_smooth, mode="reflect")
+    grad = np.gradient(prof_s)
+    # 与 Caliper.measure 内部一致：自动判别极性，统一为「正峰」
+    if np.mean(grad) < 0:
+        grad = -grad
+    ax_prof = axes[2]
+    ax_prof.plot(ss, prof_s, "o-", color=AUX, lw=1.6, ms=4, label="灰度剖面")
+    ax_prof.set_xlabel("卡尺内横向偏移（px）")
+    ax_prof.set_ylabel("灰度", color=AUX)
+    ax_prof.tick_params(axis="y", labelcolor=AUX)
+    ax_prof.grid(True, alpha=0.5)
+    ax_grad = ax_prof.twinx()
+    ax_grad.plot(ss, grad, "s-", color=DET, lw=1.5, ms=3.4, label="梯度")
+    ax_grad.set_ylabel("梯度", color=DET)
+    ax_grad.tick_params(axis="y", labelcolor=DET)
+    kpk = int(np.argmax(grad))
+    ax_grad.axvline(ss[kpk], color=DET, ls=":", lw=1.2)
+    ax_prof.set_title("单条卡尺剖面与梯度峰", pad=6)
+    h1, l1 = ax_prof.get_legend_handles_labels()
+    h2, l2 = ax_grad.get_legend_handles_labels()
+    ax_prof.legend(h1 + h2, l1 + l2, loc="lower right", fontsize=7)
+
+    fig.tight_layout()
+    print("图片 →", save(fig, "caliper"))

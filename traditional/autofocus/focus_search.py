@@ -87,16 +87,21 @@ def golden_section(
 
 
 if __name__ == "__main__":
+    import matplotlib.pyplot as plt
+
     from data.synthetic import make_focus_stack
-
     from traditional.autofocus.focus_measures import tenengrad
+    from traditional.viz import AUX, DET, GT, MUTED, metric_text, save, setup
 
+    setup()
     stack, gt_best, positions, z_focus = make_focus_stack()
     scores = np.array([tenengrad(f) for f in stack])
 
+    p_gauss = gaussian_fit(positions, scores)
+    p_frame = float(positions[int(np.argmax(scores))])
     print(f"真值对焦位置: {z_focus}")
-    print(f"整帧峰值位置: {positions[int(np.argmax(scores))]}")
-    print(f"高斯拟合位置: {gaussian_fit(positions, scores):.3f}")
+    print(f"整帧峰值位置: {p_frame}")
+    print(f"高斯拟合位置: {p_gauss:.3f}")
 
     frame_of = {round(p, 4): f for p, f in zip(positions, stack)}
 
@@ -108,3 +113,66 @@ if __name__ == "__main__":
     p2, n2 = golden_section(score_at, positions[0], positions[-1])
     print(f"爬山法  : 位置={p1:.3f}  评测次数={n1}")
     print(f"黄金分割: 位置={p2:.3f}  评测次数={n2}")
+
+    fig, axes = plt.subplots(1, 2, figsize=(13.5, 4.8), gridspec_kw={"width_ratios": [1.6, 1]})
+
+    # (a) 评分曲线 + 三点高斯拟合 + 三种定位结果
+    ax = axes[0]
+    ax.plot(positions, scores, "o-", color=MUTED, lw=1.2, ms=3.4, label="逐帧评分")
+    i = int(np.argmax(scores))
+    if 0 < i < len(scores) - 1:
+        xs3 = positions[i - 1: i + 2]
+        ys3 = np.log(np.maximum(scores[i - 1: i + 2], 1e-12))
+        coef = np.polyfit(xs3, ys3, 2)
+        xf = np.linspace(xs3[0], xs3[-1], 80)
+        ax.plot(xf, np.exp(np.polyval(coef, xf)), "-", color=DET, lw=1.9,
+                label="三点高斯拟合")
+    ax.axvline(z_focus, color=GT, ls="--", lw=1.9, label=f"真值 z={z_focus:.2f}")
+    for val, col, name, mk in (
+        (p_frame, MUTED, f"整帧峰值 {p_frame:.2f}", "s"),
+        (p_gauss, DET, f"高斯拟合 {p_gauss:.2f}", "^"),
+        (p1, AUX, f"爬山 {p1:.2f}", "D"),
+        (p2, "#9C27B0", f"黄金分割 {p2:.2f}", "v"),
+    ):
+        ax.axvline(val, color=col, ls=":", lw=1.3, alpha=0.85)
+        ax.plot(val, np.interp(val, positions, scores), marker=mk, ms=7,
+                color=col, markeredgecolor="white", markeredgewidth=0.8,
+                zorder=7, label=name)
+    ax.set_title("对焦评分曲线与四种定位结果", pad=6)
+    ax.set_xlabel("z 位置（对焦扫描坐标）")
+    ax.set_ylabel("Tenengrad 评分")
+    ax.grid(True, alpha=0.5)
+    ax.legend(loc="upper left", fontsize=6.4, borderpad=0.32, handlelength=1.5,
+              labelspacing=0.32)
+    ax.set_xlim(positions[0] - 2, positions[-1] + 2)
+    ax.set_ylim(-max(scores) * 0.04, max(scores) * 1.16)
+    metric_text(
+        ax,
+        [
+            f"真值         {z_focus:.3f}",
+            f"高斯拟合误差 {abs(p_gauss - z_focus):.3f}",
+            f"爬山误差     {abs(p1 - z_focus):.3f}",
+            f"黄金分割误差 {abs(p2 - z_focus):.3f}",
+        ],
+        loc="lower right",
+        size=7.2,
+    )
+
+    # (b) 评测次数对比 —— 搜索策略的核心成本指标
+    ax2 = axes[1]
+    labels = ["整帧峰值\n(全扫)", "高斯拟合\n(仅峰值3点)", "爬山法", "黄金分割"]
+    counts = [len(positions), 3, n1, n2]
+    colors = [MUTED, DET, AUX, "#9C27B0"]
+    bars = ax2.bar(range(len(labels)), counts, color=colors, alpha=0.88, width=0.6)
+    for b, c in zip(bars, counts):
+        ax2.text(b.get_x() + b.get_width() / 2, c + 0.6, str(c),
+                 ha="center", fontsize=8, fontweight="bold")
+    ax2.set_xticks(range(len(labels)))
+    ax2.set_xticklabels(labels, fontsize=7.5)
+    ax2.set_ylabel("评价函数调用次数")
+    ax2.set_title("搜索策略的评测成本", pad=6)
+    ax2.grid(True, axis="y", alpha=0.4)
+    ax2.set_ylim(0, max(counts) * 1.22)
+
+    fig.tight_layout()
+    print("图片 →", save(fig, "focus_search"))

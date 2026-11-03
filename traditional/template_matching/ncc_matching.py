@@ -108,9 +108,99 @@ def find_best_matches(
 
 
 if __name__ == "__main__":
-    from data.synthetic import make_template_scene
+    import matplotlib.pyplot as plt
 
+    from data.synthetic import make_template_scene
+    from traditional.viz import (
+        AUX,
+        DET,
+        GT,
+        draw_box,
+        draw_cross,
+        image_ax,
+        metric_text,
+        save,
+        setup,
+    )
+
+    setup()
     img, tpl, gt_xy = make_template_scene(noise=3.0)
+    score = match_template_ncc(img, tpl)
     matches = find_best_matches(img, tpl, min_score=0.6)
-    err = np.hypot(matches[0]["x"] - gt_xy[0], matches[0]["y"] - gt_xy[1])
-    print(f"匹配得分={matches[0]['score']:.4f}  定位误差={err:.4f} px")
+    best = matches[0]
+    err = np.hypot(best["x"] - gt_xy[0], best["y"] - gt_xy[1])
+    print(f"匹配得分={best['score']:.4f}  定位误差={err:.4f} px")
+
+    h, w = tpl.shape
+    fig, axes = plt.subplots(
+        1, 3, figsize=(14.5, 4.4), gridspec_kw={"width_ratios": [1.45, 1.15, 1]}
+    )
+
+    # (a) 场景 + 真值框 vs 检测框
+    image_ax(axes[0], img, "场景与匹配结果")
+    draw_box(axes[0], gt_xy[0], gt_xy[1], w, h, color=GT, ls="--", lw=1.8, label="真值")
+    draw_box(axes[0], best["x"], best["y"], w, h, color=DET, ls="-", lw=1.6, label="检测")
+    draw_cross(axes[0], best["x"], best["y"], color=DET, size=5, label="亚像素角点")
+    axes[0].legend(loc="lower right")
+    metric_text(
+        axes[0],
+        [
+            f"ZNCC 得分  {best['score']:.4f}",
+            f"定位误差   {err:.4f} px",
+            f"模板尺寸   {w}×{h}",
+        ],
+    )
+
+    # (b) 完整 NCC 评分曲面（vmin 取实际最小值，拉开背景对比）
+    im = axes[1].imshow(score, cmap="magma", vmin=float(score.min()), vmax=1.0)
+    axes[1].set_title("ZNCC 评分曲面", pad=6)
+    axes[1].set_xticks([])
+    axes[1].set_yticks([])
+    axes[1].set_aspect("equal")
+    cb = fig.colorbar(im, ax=axes[1], fraction=0.046, pad=0.03)
+    cb.ax.tick_params(labelsize=7)
+    cb.set_label("相关系数", fontsize=8)
+    axes[1].plot(
+        gt_xy[0], gt_xy[1], linestyle="none", marker="o", markersize=6,
+        markerfacecolor="none", markeredgecolor="#7BE0B0", markeredgewidth=1.5,
+        label="真值",
+    )
+    axes[1].plot(
+        best["x"], best["y"], marker="+", markersize=10, color="white",
+        markeredgewidth=1.8, label="亚像素峰值",
+    )
+    axes[1].legend(loc="upper right", fontsize=7)
+
+    # (c) 峰值邻域的两条评分剖面 —— 亚像素插值的直接依据
+    # 横轴统一为「相对整像素峰值的偏移」，两条曲线才可比较
+    yi = int(round(best["y"]))
+    xi = int(round(best["x"]))
+    half = 4
+    offs = np.arange(-half, half + 1)
+    if 0 <= xi - half and xi + half < score.shape[1] and 0 <= yi - half and yi + half < score.shape[0]:
+        prof_x = score[yi, xi - half: xi + half + 1]
+        prof_y = score[yi - half: yi + half + 1, xi]
+        axes[2].plot(offs, prof_x, "o-", color=AUX, lw=1.7, ms=4.5, label="沿 x 剖面")
+        axes[2].plot(offs, prof_y, "s-", color=DET, lw=1.7, ms=4.5, label="沿 y 剖面")
+        axes[2].axvline(best["x"] - xi, color=AUX, ls=":", lw=1.4)
+        axes[2].axvline(best["y"] - yi, color=DET, ls=":", lw=1.4)
+        axes[2].set_xlabel("相对整像素峰值的偏移（px）")
+        axes[2].set_ylabel("ZNCC")
+        axes[2].legend(loc="lower center")
+    else:
+        axes[2].text(0.5, 0.5, "峰值过于贴近边界\n无法取 9 点剖面",
+                     ha="center", va="center", transform=axes[2].transAxes)
+    axes[2].set_title("峰值邻域评分剖面", pad=6)
+    axes[2].grid(True, alpha=0.5)
+    metric_text(
+        axes[2],
+        [
+            f"Δx = {best['x'] - gt_xy[0]:+.3f} px",
+            f"Δy = {best['y'] - gt_xy[1]:+.3f} px",
+        ],
+        loc="upper left",
+        size=7.5,
+    )
+
+    fig.tight_layout()
+    print("图片 →", save(fig, "ncc_matching"))

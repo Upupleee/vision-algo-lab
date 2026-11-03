@@ -74,9 +74,54 @@ def match(
 
 
 if __name__ == "__main__":
-    from data.synthetic import make_template_scene
+    import matplotlib.pyplot as plt
 
+    from data.synthetic import make_template_scene
+    from traditional.viz import DET, GT, AUX, draw_box, image_ax, metric_text, save, setup
+
+    setup()
     img, tpl, gt_xy = make_template_scene(noise=2.0)
     x, y, s = match(img, tpl)
     err = np.hypot(x - gt_xy[0], y - gt_xy[1])
     print(f"形状匹配得分={s:.4f}  定位误差={err:.2f} px（整像素精度）")
+
+    h, w = tpl.shape
+    fig, axes = plt.subplots(
+        1, 2, figsize=(11, 4.6), gridspec_kw={"width_ratios": [1.5, 1]}
+    )
+
+    # (a) 场景 + 真值框 vs 检测框
+    image_ax(axes[0], img, "场景与形状匹配结果")
+    draw_box(axes[0], gt_xy[0], gt_xy[1], w, h, color=GT, ls="--", lw=1.8, label="真值")
+    draw_box(axes[0], x, y, w, h, color=DET, ls="-", lw=1.6, label="检测（整像素）")
+    axes[0].legend(loc="lower right")
+    metric_text(
+        axes[0],
+        [
+            f"形状得分   {s:.4f}",
+            f"定位误差   {err:.2f} px",
+            "精度       整像素（无亚像素精化）",
+        ],
+    )
+
+    # (b) 模板梯度特征：这是打分的依据
+    pts, dirs, wts = extract_features(tpl, top_k=200)
+    image_ax(axes[1], tpl, f"模板梯度特征（前 {len(pts)} 点）")
+    axes[1].quiver(
+        pts[:, 0], pts[:, 1], dirs[:, 0], dirs[:, 1],
+        color=AUX, scale=28, width=0.005, alpha=0.85,
+    )
+    axes[1].plot(pts[:, 0], pts[:, 1], linestyle="none", marker=".",
+                 markersize=1.6, color=DET, alpha=0.8)
+    metric_text(
+        axes[1],
+        [
+            "只取梯度方向，不用灰度绝对值",
+            "→ 对均匀光照变化鲁棒",
+        ],
+        loc="lower left",
+        size=7.5,
+    )
+
+    fig.tight_layout()
+    print("图片 →", save(fig, "shape_based"))

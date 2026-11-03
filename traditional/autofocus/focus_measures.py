@@ -10,10 +10,21 @@ import numpy as np
 
 
 def _prep(gray: np.ndarray) -> np.ndarray:
-    img = np.asarray(gray, dtype=np.float64)
+    """统一转成 float64 单通道灰度。
+
+    注意顺序：**必须先降到灰度，再转 float64**。
+
+    反过来的话 `cv2.cvtColor` 会收到 CV_64F 输入并直接抛
+    ``Unsupported depth of input image`` —— cvtColor 只接受
+    8U / 16U / 32F 三档深度，不认 CV_64F。彩色图（工业相机常见
+    输出）一进 tenengrad 就会炸在这里。
+    """
+    img = np.asarray(gray)
     if img.ndim == 3:
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    return img
+        # float64 三通道先降到 float32 才能进 cvtColor
+        src = img.astype(np.float32) if img.dtype == np.float64 else img
+        img = cv2.cvtColor(src, cv2.COLOR_BGR2GRAY)
+    return img.astype(np.float64)
 
 
 def brenner(gray: np.ndarray) -> float:
@@ -100,13 +111,74 @@ def monotonic_ratio(scores: np.ndarray) -> float:
 
 
 if __name__ == "__main__":
-    from data.synthetic import make_focus_stack
+    import matplotlib.pyplot as plt
 
-    stack, gt_best, positions, _ = make_focus_stack()
+    from data.synthetic import make_focus_stack
+    from traditional.viz import AUX, DET, GT, MUTED, metric_text, save, setup
+
+    setup()
+    stack, gt_best, positions, z_focus = make_focus_stack()
     print(f"真值最清晰帧: {gt_best}（位置 {positions[gt_best]}）")
+
+    curves: dict[str, np.ndarray] = {}
+    peak_idx: dict[str, int] = {}
+    mono: dict[str, float] = {}
     for name, fn in ALL_MEASURES.items():
-        scores = [fn(f) for f in stack]
+        scores = np.array([fn(f) for f in stack], dtype=float)
+        curves[name] = scores
+        peak_idx[name] = int(np.argmax(scores))
+        mono[name] = float(monotonic_ratio(scores))
         print(
-            f"{name:>16s}: 峰值帧={int(np.argmax(scores)):3d}  "
-            f"单峰性={monotonic_ratio(scores):.2f}"
+            f"{name:>16s}: 峰值帧={peak_idx[name]:3d}  "
+            f"单峰性={mono[name]:.2f}"
         )
+
+    fig, axes = plt.subplots(1, 2, figsize=(13.5, 4.8), gridspec_kw={"width_ratios": [1.55, 1]})
+
+    # (a) 7 条评价曲线（各自归一化到 [0,1] 才能同图比较）
+    cmap = plt.get_cmap("tab10")
+    for i, (name, sc) in enumerate(curves.items()):
+        span = sc.max() - sc.min()
+        norm = (sc - sc.min()) / span if span > 1e-12 else np.zeros_like(sc)
+        axes[0].plot(positions, norm, "-", lw=1.7, color=cmap(i % 10), label=name)
+        axes[0].plot(positions[peak_idx[name]], norm[peak_idx[name]], "o",
+                     ms=4.5, color=cmap(i % 10), markeredgecolor="white", markeredgewidth=0.6)
+    axes[0].axvline(z_focus, color=GT, ls="--", lw=1.8, label=f"真值 z={z_focus:.2f}")
+    axes[0].set_title("七种清晰度评价函数的对焦曲线", pad=6)
+    axes[0].set_xlabel("z 位置（对焦扫描坐标）")
+    axes[0].set_ylabel("归一化评分")
+    axes[0].grid(True, alpha=0.5)
+    axes[0].legend(loc="upper center", ncol=4, fontsize=6.8, borderpad=0.35)
+    metric_text(
+        axes[0],
+        [f"扫描帧数 {len(stack)}", f"真值帧 {gt_best}"],
+        loc="lower center",
+        size=7,
+    )
+
+    # (b) 单峰性 + 峰值邻域放大（看清谁更尖锐）
+    names = list(curves.keys())
+    mono_v = np.array([mono[n] for n in names])
+
+    ax_b = axes[1]
+    idx = np.arange(len(names))
+    bars = ax_b.bar(idx, mono_v, 0.62, color=AUX, alpha=0.85)
+    for i, (b, v) in enumerate(zip(bars, mono_v)):
+        ax_b.text(b.get_x() + b.get_width() / 2, v + 0.02, f"{v:.2f}",
+                  ha="center", fontsize=7, color="#2C5F8A")
+    ax_b.set_ylim(0, 1.22)
+    ax_b.set_xticks(idx)
+    ax_b.set_xticklabels(names, rotation=32, ha="right", fontsize=7.5)
+    ax_b.set_ylabel("单峰性（1.0 = 理想）")
+    ax_b.set_title("各评价函数的单峰性", pad=6)
+    ax_b.grid(True, axis="y", alpha=0.4)
+    ax_b.axhline(1.0, color=GT, ls="--", lw=1.2)
+    ax_b.set_xlabel(
+        f"七种函数峰值帧全部 = {gt_best}（真值帧）\n"
+        f"残余 {abs(positions[gt_best] - z_focus):.2f} z 来自扫描步长 "
+        f"{positions[1] - positions[0]:.2f}，非函数差异",
+        fontsize=6.8,
+    )
+
+    fig.tight_layout()
+    print("图片 →", save(fig, "focus_measures"))

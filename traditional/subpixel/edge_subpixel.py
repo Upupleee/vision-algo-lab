@@ -106,16 +106,92 @@ def devernay_edges(
 
 
 if __name__ == "__main__":
-    from data.synthetic import make_edge_profile, make_edge_scene
+    import matplotlib.pyplot as plt
 
+    from data.synthetic import make_edge_profile, make_edge_scene
+    from traditional.viz import AUX, DET, GT, image_ax, metric_text, save, setup
+
+    setup()
     profile, gt = make_edge_profile(sigma=1.2, noise=1.0)
     p1, _ = parabolic_gradient_subpixel(profile)
     c, rms, sig = gaussian_fit_subpixel(profile, x0=p1)
-    print(f"[1D] 抛物线法  : 误差={abs(p1 - gt):.4f} px")
-    print(f"[1D] 高斯拟合法: 误差={abs(c - gt):.4f} px  sigma={sig:.3f}  RMS={rms:.3f}")
+    e_par, e_gau = abs(p1 - gt), abs(c - gt)
+    print(f"[1D] 抛物线法  : 误差={e_par:.4f} px")
+    print(f"[1D] 高斯拟合法: 误差={e_gau:.4f} px  sigma={sig:.3f}  RMS={rms:.3f}")
 
     img, gt_fn = make_edge_scene(sigma=1.0, noise=0.5)
     pts = devernay_edges(img)
     if len(pts):
         err = np.abs(pts[:, 0] - gt_fn(pts[:, 1])) / np.sqrt(1 + 0.08**2)
-        print(f"[2D] Devernay  : {len(pts)} 点  中位法向误差={np.median(err):.4f} px")
+        med = float(np.median(err))
+        print(f"[2D] Devernay  : {len(pts)} 点  中位法向误差={med:.4f} px")
+    else:
+        med = float("nan")
+
+    fig, axes = plt.subplots(1, 2, figsize=(12.5, 4.4), gridspec_kw={"width_ratios": [1.25, 1]})
+
+    # (a) 一维阶跃剖面：真值 vs 两种亚像素估计
+    xs = np.arange(len(profile))
+    axes[0].plot(xs, profile, "o", color="#9AA0A6", ms=3.2, alpha=0.75, label="采样剖面（含噪声）")
+    axes[0].axvline(gt, color=GT, ls="--", lw=1.8, label=f"真值 {gt:.3f}")
+    axes[0].axvline(p1, color=AUX, ls=":", lw=1.8, label=f"抛物线 {p1:.3f}")
+    axes[0].axvline(c, color=DET, ls="-", lw=1.5, alpha=0.9, label=f"高斯拟合 {c:.3f}")
+    axes[0].set_title("一维阶跃边缘的亚像素定位", pad=6)
+    axes[0].set_xlabel("像素坐标（px）")
+    axes[0].set_ylabel("灰度")
+    axes[0].grid(True, alpha=0.5)
+    axes[0].legend(loc="lower right", fontsize=7.5)
+    metric_text(
+        axes[0],
+        [
+            f"抛物线误差  {e_par:.4f} px",
+            f"高斯拟合误差 {e_gau:.4f} px",
+            f"拟合 sigma   {sig:.3f}",
+            f"拟合 RMS     {rms:.4f}",
+        ],
+    )
+
+    # (a-inset) 放大边缘过渡区，三条竖线才分得开
+    zx0, zx1 = gt - 2.5, gt + 2.5
+    axin = axes[0].inset_axes([0.60, 0.10, 0.37, 0.30])
+    axin.plot(xs, profile, "o", color="#9AA0A6", ms=3.0, alpha=0.85)
+    for v, col, st, lw in ((gt, GT, "--", 1.8), (p1, AUX, ":", 1.8), (c, DET, "-", 1.4)):
+        axin.axvline(v, color=col, ls=st, lw=lw)
+    axin.set_xlim(zx0, zx1)
+    lo = np.min(profile[(xs >= zx0) & (xs <= zx1)])
+    hi = np.max(profile[(xs >= zx0) & (xs <= zx1)])
+    pad = (hi - lo) * 0.15
+    axin.set_ylim(lo - pad, hi + pad)
+    axin.tick_params(labelsize=6.5)
+    axin.grid(True, alpha=0.4)
+    axin.set_title("过渡区放大", fontsize=7, pad=2)
+    axes[0].indicate_inset_zoom(axin, edgecolor="#9AA0A6", alpha=0.7)
+
+    # (b) 二维 Devernay 边缘点 —— 裁到边缘附近，否则斜率 0.02 看不出倾斜
+    x0c, x1c, y0c, y1c = 50, 76, 0, 64
+    crop = img[y0c:y1c, x0c:x1c]
+    axes[1].imshow(
+        crop, cmap="gray", interpolation="nearest", aspect="auto",
+        extent=(x0c - 0.5, x1c - 0.5, y1c - 0.5, y0c - 0.5),
+    )
+    axes[1].set_title("二维 Devernay 亚像素边缘（局部放大）", pad=6)
+    axes[1].set_xlabel("x（px）")
+    axes[1].set_ylabel("y（px）")
+    yy = np.linspace(y0c, y1c, 100)
+    axes[1].plot(gt_fn(yy), yy, color=GT, ls="--", lw=1.6, label="真值边缘")
+    if len(pts):
+        sel = ((pts[:, 0] >= x0c) & (pts[:, 0] < x1c)
+               & (pts[:, 1] >= y0c) & (pts[:, 1] < y1c))
+        axes[1].plot(pts[sel, 0], pts[sel, 1], linestyle="none", marker="o",
+                     ms=3.0, color=DET, alpha=0.85,
+                     label=f"边缘点 {int(sel.sum())}")
+    axes[1].legend(loc="lower right", fontsize=7)
+    metric_text(
+        axes[1],
+        [f"全图 {len(pts)} 点", f"中位法向误差 {med:.4f} px"],
+        loc="upper left",
+        size=7.5,
+    )
+
+    fig.tight_layout()
+    print("图片 →", save(fig, "edge_subpixel"))
