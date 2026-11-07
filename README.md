@@ -42,6 +42,14 @@ vision-algo-lab/
 └── docs/                        # 论文笔记 / 实验记录
 ```
 
+## 文档入口
+
+[工业视觉文档导航](docs/README.md)：按 12 个领域查阅传统 / ML / DL 路线、应用排障、已知状态与现有资料，并提供横向基础、评测目录和阅读路径。
+
+[演进节点与算法卡覆盖核对](docs/evolution_coverage.md)：逐主时间线节点链接具体卡片，区分已有、部分、缺卡与非算法，列出五层／问答、证据及实现边界，并提供跨域重复说明和去重缺口；不代表算法复现完成。
+
+2026-11-06文档同步：**255卡不增；113节点＝83已有＋2部分＋4缺卡＋24非算法，剩6项覆盖任务**。G44机制已有，但证明一致性与采样安全[独立P0保留](docs/evolution_coverage.md#g44-independent-p0)，不降级、不升级为实测；[原材料最小缺页清单](docs/evolution_coverage.md#minimum-source-pages)与[笔记撤回追踪](docs/research_notes.md#zernike-retraction-20261106)分别列明。
+
 ## 快速开始
 
 ### 环境准备（首次执行一次）
